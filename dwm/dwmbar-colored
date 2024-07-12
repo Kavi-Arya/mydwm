@@ -1,0 +1,181 @@
+#!/bin/sh
+# colors
+source ~/.local/bin/statusbar/themes/gruvbox
+# source ~/.local/bin/statusbar/themes/everforest
+interval=0
+
+wtt(){
+  weather=$(curl 'wttr.in/~Delhi?format=1' -f --max-time 1 | awk '{ print $2 }' | cut -c2-)
+ 	echo -e "^c$magenta^^c$black^^b$magenta^  $weather"
+}
+
+# Disk :
+disk(){
+  location=${1:-/}
+  [ -d "$location" ] || exit
+  # printf "%s %s\n" "$(df -h "$location" | awk ' /[0-9]/ {print $3 "/" $2}')"
+  disk=$(df -h "$location" | awk ' /[0-9]/ {print $3 "/" $2}')
+ 	echo -e "^c$red^^c$black^^b$red^  $disk "
+}
+
+# Battery :
+bat(){
+	for battery in /sys/class/power_supply/BAT?*; do
+		# If non-first battery, print a space separator.
+		[ -n "${capacity+x}" ] && printf " "
+		# Sets up the status and capacity
+		case "$(cat "$battery/status" 2>&1)" in
+			"Full") status="" ;;
+			"Discharging") status="" ;;
+			"Charging") status="" ;;
+			"Not charging") status="" ;;
+			"Unknown") status="" ;;
+			*) exit 1 ;;
+		esac
+		capacity="$(cat "$battery/capacity" 2>&1)"
+		# Will make a warn variable if discharging and low
+		[ "$status" = " " ] && [ "$capacity" -le 25 ] && warn=" "
+		# Prints the info
+		printf "%s%s%d%%" "^c$blue^^c$black^^b$blue^ $status" "^c$black^^b$blue^ $warn" "$capacity"; unset warn
+	done && printf " \\n"
+}
+
+# Date && clock :
+dat(){
+	date="$(date +"%a %d %b %r"| sed 's/  / /g')"
+	#echo -e " $date"
+	echo -e "^c$red^^c$black^^b$red^  $date "
+	
+}
+
+# Cpu Temp :
+tmp(){
+	ctmp=$(sensors | awk '/Core 0/ {print$3}' | sed 's/+//')
+	echo -e "^c$yellow^^c$black^^b$yellow^  $ctmp "
+}
+
+# Cpu Usage :
+cpu(){
+	read cpu a b c previdle rest < /proc/stat
+	prevtotal=$((a+b+c+previdle))
+	sleep 0.5
+	read cpu a b c idle rest < /proc/stat
+	total=$((a+b+c+idle))
+	cpu=$((100*( (total-prevtotal) - (idle-previdle) ) / (total-prevtotal) ))
+	#echo -e " $cpu%"
+	echo -e "^c$orange^^c$black^^b$orange^  $cpu% " 
+}
+
+# Keybord Layout :
+key(){
+	kb="$(xkb-switch)" || exit 1
+	#echo " $kb"
+	echo -e "^c$green^^b$green^^c$black^^b$green^  $kb "
+	
+}
+
+# Screen Light :
+lit(){
+	#lit="$(xbacklight | sed 's/\..*//g')"
+	#echo " $lit%"
+	lit="$(brightnessctl | grep -oP '[^()]+%')"
+	#echo " $lit"
+	echo -e "^c$cyan^^b$cyan^^c$black^^b$cyan^  $lit "		
+}
+
+# Memory :
+mem(){
+	mem="$(free -h | awk '/^Mem/ { print $3 }' | sed s/i//g)"
+	echo -e "^c$green^^b$green^^c$black^^b$green^  $mem "
+}
+
+# Volume :
+vol(){
+	[ $(pamixer --get-mute) = true ] && echo  && exit
+
+	vol="$(pamixer --get-volume)"
+
+	if [ "$vol" -gt "70" ]; then
+		icon=""
+	elif [ "$vol" -gt "30" ]; then
+		icon=""
+	elif [ "$vol" -gt "0" ]; then
+		icon="" 
+	else
+		echo "" && exit
+	fi
+	echo "^c$magenta^^b$magenta^^c$black^^b$magenta^ $icon $vol% "
+}
+
+
+net() {
+	connected=$(cat /sys/class/net/e*/operstate 2>/dev/null)
+	if [[ "$connected" =~ "up" ]]; then
+		printf "^c$black^^b$black^^c$white^  %s"
+	elif [[ "$connected" =~ "down" ]]; then
+		check_wifi=$(cat /sys/class/net/wl*/operstate 2>/dev/null)
+		if [[ "$check_wifi" =~ "up" ]]; then
+      printf "^c$black^^b$black^^c$white^  %s"
+		elif [[ "$check_wifi" =~ "down" ]]; then
+			printf "^c$black^^b$black^^c$white^ 睊 %s"
+		fi
+	fi
+}
+
+# Network traffic
+nettrf(){
+	
+	update() {
+		sum=0
+		for arg; do
+			read -r i < "$arg"
+			sum=$(( sum + i ))
+		done
+		cache=${XDG_CACHE_HOME:-$HOME/.cache}/${1##*/}
+		[ -f "$cache" ] && read -r old < "$cache" || old=0
+		printf %d\\n "$sum" > "$cache"
+		printf %d\\n $(( sum - old ))
+	}
+
+	rx=$(update /sys/class/net/[ew]*/statistics/rx_bytes)
+	tx=$(update /sys/class/net/[ew]*/statistics/tx_bytes)
+
+	printf "^c$indigo^^b$indigo^^c$black^ ^c$black^^b$indigo^ %4sB ^b$indigo^^c$black^ ^c$black^^b$indigo^ %4sB \\n" $(numfmt --to=iec $rx) $(numfmt --to=iec $tx)	
+}
+
+# Updates
+pkg_updates() {
+	#updates=$(xbps-install -un | wc -l) # void
+	updates=$(pacman -Qu | grep -Fcv "[ignored]" | sed "s/^//;s/^0$//g")   # arch , needs pacman contrib
+	# updates=$(aptitude search '~U' | wc -l)  # apt (ubuntu,debian etc)
+
+	if [ "$updates" == "0" ]; then
+		printf "^c$magenta^^b$magenta^^c$black^  ^c$magenta^^b$black^Fully Updated^d^"
+	else
+		printf "^c$magenta^^b$magenta^^c$black^  $updates " "^c$magenta^^b$black^updates ^d^"
+	fi
+}
+fuckme(){
+  while true; do
+    [ $interval = 0 ] || [ $(($interval % 3600)) = 0 ] && updates=$(pkg_updates)
+    interval=$((interval + 1))
+    space=" "
+    range="|"
+
+    xsetroot -name "$(wtt)"
+    sleep 6h
+  done &
+}
+
+while true; do
+ [ $interval = 0 ] || [ $(($interval % 3600)) = 0 ] && updates=$(pkg_updates)
+  interval=$((interval + 1))
+  space=" "
+  range="|"
+  
+  # xsetroot -name "$updates$(nettrf)$(tmp)$(cpu)$(mem)$(lit)$(bat)$(key)$(dat)$(net)"
+  #  in color order
+  # xsetroot -name "$(nettrf)$(mem)$(dat)$(cpu)$updates$(lit)$(bat)$(tmp)"
+  xsetroot -name "$(wtt) $(nettrf)$(bat)$(mem)$(tmp)$(cpu)$(dat)$(net)"
+  sleep 0.2
+done &
